@@ -1,0 +1,33 @@
+[package]
+name = "graphql-proxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+http = "1.1"
+async-graphql = "7.0"
+async-graphql-axum = "7.0"
+async-graphql-parser = "7.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tower-http = { version = "0.6.1", features = ["trace"] }
+tokio = { version = "1.40", features = ["rt", "rt-multi-thread", "macros"] }
+tokio-stream = "0.1"
+axum = { version = "0.7", features = ["ws"] }
+clap = { version = "4.5", features = ["derive"] }
+parking_lot = "0.12"
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2.0"
+futures-util = "0.3"
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+dotenvy = "0.15"
+tokio-tungstenite = { version = "0.24", features = ["rustls"] }
+async-stream = "0.3"
+humantime = "2.1"
+bytes = "1.8"
+uuid = "1.11"
+
+graphql-cli-tools = { git = "https://github.com/bytifex/graphql-cli-tools.git", rev = "ca475817ea4866c069a417881f115b872b223430" }
+axum-helpers = { git = "https://github.com/bytifex/axum-helpers.git", rev = "32495ce0a46da410d268ae8c607010b1b8f3777b" }

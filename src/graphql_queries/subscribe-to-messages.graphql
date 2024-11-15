@@ -1,0 +1,13 @@
+subscription subscribeToMessages(
+	$messageFilters: [MessageFilter!]!
+) {
+	messages(
+		messageFilters: $messageFilters
+	) {
+		connectionId
+		sequenceCounter
+		connectionType
+		messageDirection
+		message
+	}
+}

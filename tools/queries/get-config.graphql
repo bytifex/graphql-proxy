@@ -1,0 +1,15 @@
+{
+	prohibitMutation
+	serverEndpoints {
+		graphQlEndpoint
+		graphQlWsEndpoint
+	}
+	requestHeaders {
+		name
+		value
+	}
+	responseHeaders {
+		name
+		value
+	}
+}
