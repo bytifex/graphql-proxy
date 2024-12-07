@@ -15,7 +15,7 @@ use crate::{
     log_location,
     model::{
         enums::{connection_type::ConnectionType, message_direction::MessageDirection},
-        types::message::Message,
+        types::{headers::Headers, message::Message},
     },
     utils::move_and_replace_headers,
 };
@@ -30,6 +30,30 @@ pub async fn post_graphql_proxy(
     let connection_id = ConnectionId::new();
     let mut sequence_counter = 0;
 
+    const PROHIBITED_HEADER_NAMES_TO_SERVER: &[&str] = &["host", "content-length", "content-type"];
+
+    let mut request_headers = headers
+        .iter()
+        .filter_map(|(name, value)| {
+            if PROHIBITED_HEADER_NAMES_TO_SERVER.contains(&name.as_str()) {
+                None
+            } else {
+                Some((name.clone(), value.clone()))
+            }
+        })
+        .collect();
+
+    let mut additional_request_headers = state.admin_state().request_headers().read().clone();
+    move_and_replace_headers(&mut request_headers, &mut additional_request_headers, &[]);
+
+    let server_endpoint_url = Arc::new(
+        state
+            .admin_state()
+            .server_graphql_endpoints_read()
+            .graphql_endpoint
+            .clone(),
+    );
+
     let message_sender = state.admin_state().message_sender_ref().clone();
     if message_sender.receiver_count() != 0 {
         let _ = message_sender.send(Message {
@@ -38,6 +62,8 @@ pub async fn post_graphql_proxy(
             sequence_counter,
             connection_type: ConnectionType::Http,
             message_direction: MessageDirection::Request,
+            transmitted_headers: Some(Arc::new(Headers::from_header_map(request_headers.clone()))),
+            server_endpoint_url: server_endpoint_url.clone(),
         });
     }
     sequence_counter += 1;
@@ -63,27 +89,9 @@ pub async fn post_graphql_proxy(
         ])));
     }
 
-    const PROHIBITED_HEADER_NAMES_TO_SERVER: &[&str] = &["host", "content-length", "content-type"];
-
-    let mut request_headers = headers
-        .iter()
-        .filter_map(|(name, value)| {
-            if PROHIBITED_HEADER_NAMES_TO_SERVER.contains(&name.as_str()) {
-                None
-            } else {
-                Some((name.clone(), value.clone()))
-            }
-        })
-        .collect();
-
-    let mut additional_request_headers = state.admin_state().request_headers_read().clone();
-    move_and_replace_headers(&mut request_headers, &mut additional_request_headers, &[]);
-
-    let endpoints = state.admin_state().server_graphql_endpoints_read().clone();
-
     let server_response = state
         .server_client()
-        .post(endpoints.graphql_endpoint)
+        .post(server_endpoint_url.as_ref())
         .headers(request_headers)
         .json(&graphql_request.0)
         .send()
@@ -98,13 +106,14 @@ pub async fn post_graphql_proxy(
 
     log::debug!("Server response = {:?}", server_response);
 
-    let additional_response_headers = state.admin_state().response_headers_read().clone();
+    let additional_response_headers = state.admin_state().response_headers().read().clone();
     process_server_response(
         connection_id,
         sequence_counter,
         message_sender,
         server_response,
         additional_response_headers,
+        server_endpoint_url,
     )
     .await
 }
@@ -138,6 +147,7 @@ async fn process_server_response(
     message_sender: broadcast::Sender<Message>,
     mut server_response: reqwest::Response,
     mut additional_response_headers: HeaderMap,
+    server_endpoint_url: Arc<String>,
 ) -> Result<impl IntoResponse, GraphQLResponse> {
     const PROHIBITED_HEADER_NAMES_TO_CLIENT: &[&str] = &[];
 
@@ -159,6 +169,7 @@ async fn process_server_response(
     })?;
 
     if message_sender.receiver_count() != 0 {
+        let transmitted_headers = Some(Arc::new(Headers::from_header_map(headers.clone())));
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
             let _ = message_sender.send(Message {
                 connection_id: connection_id.as_arc_string(),
@@ -166,6 +177,8 @@ async fn process_server_response(
                 sequence_counter,
                 connection_type: ConnectionType::Http,
                 message_direction: MessageDirection::Response,
+                transmitted_headers,
+                server_endpoint_url,
             });
         } else {
             let _ = message_sender.send(Message {
@@ -174,9 +187,33 @@ async fn process_server_response(
                 sequence_counter,
                 connection_type: ConnectionType::Http,
                 message_direction: MessageDirection::Response,
+                transmitted_headers,
+                server_endpoint_url,
             });
         }
     }
 
     Ok((headers, Body::from(text)))
+}
+
+fn create_curl_command_string(
+    endpoint_url: &String,
+    headers: &HeaderMap,
+    graphql_request: &GraphQLRequest,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut curl_command = format!(
+        "curl -X POST '{}' -H 'Content-Type: application/json'",
+        endpoint_url
+    );
+
+    for (name, value) in headers.iter() {
+        curl_command.push_str(&format!(" -H '{}: {}'", name, value.to_str()?));
+    }
+
+    curl_command.push_str(&format!(
+        " -d '{}'",
+        serde_json::to_string(&graphql_request.0)?,
+    ));
+
+    Ok(curl_command)
 }

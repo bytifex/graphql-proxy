@@ -5,11 +5,15 @@
 		graphQlWsEndpoint
 	}
 	requestHeaders {
-		name
-		value
+		all {
+			name
+			value
+		}
 	}
 	responseHeaders {
-		name
-		value
+		all {
+			name
+			value
+		}
 	}
 }

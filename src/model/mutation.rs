@@ -40,7 +40,7 @@ impl Mutation {
         name: HeaderNameScalar,
         value: HeaderValueScalar,
     ) -> bool {
-        let mut headers = self.admin_state.request_headers_write();
+        let mut headers = self.admin_state.request_headers().write();
 
         headers.insert(name.as_header_name().clone(), value.0);
 
@@ -52,7 +52,7 @@ impl Mutation {
         name: HeaderNameScalar,
         value: HeaderValueScalar,
     ) -> Option<HeaderValueScalar> {
-        let mut headers = self.admin_state.request_headers_write();
+        let mut headers = self.admin_state.request_headers().write();
 
         let old_header_value = headers.remove(name.as_header_name());
         headers.insert(name.as_header_name().clone(), value.0);
@@ -62,7 +62,8 @@ impl Mutation {
 
     pub async fn remove_request_header(&self, name: HeaderNameScalar) -> Option<HeaderValueScalar> {
         self.admin_state
-            .request_headers_write()
+            .request_headers()
+            .write()
             .remove(name.as_header_name())
             .map(|item| item.into())
     }
@@ -72,7 +73,7 @@ impl Mutation {
         name: HeaderNameScalar,
         value: HeaderValueScalar,
     ) -> bool {
-        let mut headers = self.admin_state.response_headers_write();
+        let mut headers = self.admin_state.response_headers().write();
 
         headers.insert(name.as_header_name().clone(), value.0);
 
@@ -84,7 +85,7 @@ impl Mutation {
         name: HeaderNameScalar,
         value: HeaderValueScalar,
     ) -> Option<HeaderValueScalar> {
-        let mut headers = self.admin_state.response_headers_write();
+        let mut headers = self.admin_state.response_headers().write();
 
         let old_header_value = headers.remove(name.as_header_name());
         headers.insert(name.as_header_name().clone(), value.0);
@@ -97,7 +98,8 @@ impl Mutation {
         name: HeaderNameScalar,
     ) -> Option<HeaderValueScalar> {
         self.admin_state
-            .response_headers_write()
+            .response_headers()
+            .write()
             .remove(name.as_header_name())
             .map(|item| item.into())
     }

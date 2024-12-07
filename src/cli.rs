@@ -89,6 +89,21 @@ pub struct SubscribeMessagesParams {
         help("When in subscription mode, the client will try to reconnect to the server if there is no connection (e.g., 500ms"),
     )]
     pub try_reconnect_duration: Option<humantime::Duration>,
+
+    #[arg(
+        long("transmitted-headers"),
+        help(
+            "When set, the messages will contain the headers sent to the peer (proxied server or client)"
+        )
+    )]
+    pub transmitted_headers: bool,
+
+    #[arg(
+        long("as-curl-command"),
+        requires("transmitted_headers"),
+        help("When set, the requests sent to the proxied server will be printed as curl commands (be aware that this flag sets transmitted-headers also)")
+    )]
+    pub as_curl_command: bool,
 }
 
 #[derive(Debug, Parser)]

@@ -35,7 +35,7 @@ use crate::{
     log_location,
     model::{
         enums::{connection_type::ConnectionType, message_direction::MessageDirection},
-        types::message::Message,
+        types::{headers::Headers, message::Message},
     },
     utils::move_and_replace_headers,
 };
@@ -45,20 +45,23 @@ pub async fn get_graphql_ws_proxy(
     axum::extract::State(state): axum::extract::State<AppState>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, GraphQLResponse> {
-    let server_endpoint = state
-        .admin_state()
-        .server_graphql_endpoints_read()
-        .graphql_ws_endpoint
-        .clone();
+    let server_endpoint_url = Arc::new(
+        state
+            .admin_state()
+            .server_graphql_endpoints_read()
+            .graphql_ws_endpoint
+            .clone(),
+    );
 
     log::debug!(
         "Starting ws connection with endpoint: '{}'",
-        server_endpoint
+        server_endpoint_url
     );
 
     log::debug!("GaphQL WS request headers = {:?}", headers);
 
-    let mut request = server_endpoint
+    let mut request = server_endpoint_url
+        .as_ref()
         .into_client_request()
         .inspect_err(|e| log::error!("{}, {}", log_location!(), e.to_string()))
         .map_err(|e| {
@@ -83,8 +86,24 @@ pub async fn get_graphql_ws_proxy(
         PROHIBITED_HEADER_NAMES_TO_SERVER,
     );
 
-    let mut additional_request_headers = state.admin_state().request_headers_read().clone();
+    let mut additional_request_headers = state.admin_state().request_headers().read().clone();
     move_and_replace_headers(request.headers_mut(), &mut additional_request_headers, &[]);
+
+    let message_sender = state.admin_state().message_sender_ref().clone();
+
+    let connection_id = ConnectionId::new();
+    let sequence_counter = Arc::new(AtomicU64::new(0));
+    send_message_to_subscriptions(
+        connection_id.clone(),
+        &sequence_counter,
+        serde_json::Value::Null,
+        MessageDirection::Request,
+        &message_sender,
+        Some(Arc::new(Headers::from_header_map(
+            request.headers().clone(),
+        ))),
+        server_endpoint_url.clone(),
+    );
 
     let (ws_stream, mut server_response) = tokio_tungstenite::connect_async(request)
         .await
@@ -98,10 +117,23 @@ pub async fn get_graphql_ws_proxy(
 
     log::debug!("Websocket server response = {:?}", server_response);
 
-    let message_sender = state.admin_state().message_sender_ref().clone();
+    let mut response = {
+        let message_sender = message_sender.clone();
+        let connection_id = connection_id.clone();
+        let sequence_counter = sequence_counter.clone();
+        let server_endpoint_url = server_endpoint_url.clone();
 
-    let mut response =
-        ws.on_upgrade(move |socket| handle_socket(socket, ws_stream, message_sender));
+        ws.on_upgrade(move |socket| {
+            handle_socket(
+                socket,
+                ws_stream,
+                message_sender,
+                connection_id,
+                sequence_counter,
+                server_endpoint_url,
+            )
+        })
+    };
 
     const PROHIBITED_HEADER_NAMES_TO_CLIENT: &[&str] = &[
         "host",
@@ -120,11 +152,23 @@ pub async fn get_graphql_ws_proxy(
         PROHIBITED_HEADER_NAMES_TO_CLIENT,
     );
 
-    let mut additional_response_headers = state.admin_state().response_headers_read().clone();
+    let mut additional_response_headers = state.admin_state().response_headers().read().clone();
     move_and_replace_headers(
         response.headers_mut(),
         &mut additional_response_headers,
         &[],
+    );
+
+    send_message_to_subscriptions(
+        connection_id.clone(),
+        &sequence_counter,
+        serde_json::Value::Null,
+        MessageDirection::Response,
+        &message_sender,
+        Some(Arc::new(Headers::from_header_map(
+            response.headers().clone(),
+        ))),
+        server_endpoint_url,
     );
 
     Ok(response)
@@ -134,17 +178,18 @@ async fn handle_socket(
     client_stream: WebSocket,
     server_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     message_sender: broadcast::Sender<Message>,
+    connection_id: ConnectionId,
+    sequence_counter: Arc<AtomicU64>,
+    server_endpoint_url: Arc<String>,
 ) {
     let (server_to_client_sender, server_to_client_receiver) = mpsc::unbounded_channel();
     let (client_to_server_sender, client_to_server_receiver) = mpsc::unbounded_channel();
-
-    let connection_id = ConnectionId::new();
-    let sequence_counter = Arc::new(AtomicU64::new(0));
 
     {
         let message_sender = message_sender.clone();
         let connection_id = connection_id.clone();
         let sequence_counter = sequence_counter.clone();
+        let server_endpoint_url = server_endpoint_url.clone();
 
         tokio::spawn(async move {
             handle_server_stream(
@@ -154,6 +199,7 @@ async fn handle_socket(
                 server_to_client_sender,
                 client_to_server_receiver,
                 message_sender,
+                server_endpoint_url,
             )
             .await;
         });
@@ -166,6 +212,7 @@ async fn handle_socket(
         client_to_server_sender,
         server_to_client_receiver,
         message_sender,
+        server_endpoint_url,
     )
     .await;
 }
@@ -177,6 +224,7 @@ async fn handle_server_stream(
     server_to_client_sender: mpsc::UnboundedSender<AxumWsMessage>,
     mut client_to_server_receiver: mpsc::UnboundedReceiver<AxumWsMessage>,
     message_sender: broadcast::Sender<Message>,
+    server_endpoint_url: Arc<String>,
 ) {
     loop {
         tokio::select! {
@@ -184,12 +232,14 @@ async fn handle_server_stream(
                 match message {
                     Some(Ok(message)) => {
                         let message = tungstenite_to_axum_message(message);
-                        send_message_to_subscriptions(
+                        send_axum_ws_message_to_subscriptions(
                             connection_id.clone(),
-                            sequence_counter.clone(),
+                            &sequence_counter,
                             &message,
                             MessageDirection::Response,
-                            &message_sender
+                            &message_sender,
+                            None,
+                            server_endpoint_url.clone(),
                         );
 
                         if server_to_client_sender.send(message).is_err() {
@@ -230,18 +280,21 @@ async fn handle_client_stream(
     client_to_server_sender: mpsc::UnboundedSender<AxumWsMessage>,
     mut server_to_client_receiver: mpsc::UnboundedReceiver<AxumWsMessage>,
     message_sender: broadcast::Sender<Message>,
+    server_endpoint_url: Arc<String>,
 ) {
     loop {
         tokio::select! {
             message = client_stream.next() => {
                 match message {
                     Some(Ok(message)) => {
-                        send_message_to_subscriptions(
+                        send_axum_ws_message_to_subscriptions(
                             connection_id.clone(),
-                            sequence_counter.clone(),
+                            &sequence_counter,
                             &message,
                             MessageDirection::Request,
-                            &message_sender
+                            &message_sender,
+                            None,
+                            server_endpoint_url.clone(),
                         );
                         if client_to_server_sender.send(message).is_err() {
                             break;
@@ -279,41 +332,69 @@ async fn handle_client_stream(
 
 fn send_message_to_subscriptions(
     connection_id: ConnectionId,
-    sequence_counter: Arc<AtomicU64>,
+    sequence_counter: &AtomicU64,
+    message: serde_json::Value,
+    message_direction: MessageDirection,
+    message_sender: &broadcast::Sender<Message>,
+    transmitted_headers: Option<Arc<Headers>>,
+    server_endpoint_url: Arc<String>,
+) {
+    let sequence_counter = sequence_counter.fetch_add(1, atomic::Ordering::SeqCst);
+    let _ = message_sender.send(Message {
+        connection_id: connection_id.as_arc_string(),
+        message: Arc::new(message),
+        sequence_counter,
+        connection_type: ConnectionType::Ws,
+        message_direction,
+        transmitted_headers,
+        server_endpoint_url,
+    });
+}
+
+fn send_axum_ws_message_to_subscriptions(
+    connection_id: ConnectionId,
+    sequence_counter: &AtomicU64,
     message: &AxumWsMessage,
     message_direction: MessageDirection,
     message_sender: &broadcast::Sender<Message>,
+    transmitted_headers: Option<Arc<Headers>>,
+    server_endpoint_url: Arc<String>,
 ) {
-    let sequence_counter = sequence_counter.fetch_add(1, atomic::Ordering::SeqCst);
     if message_sender.receiver_count() != 0 {
         match message {
             AxumWsMessage::Text(text) => {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
-                    let _ = message_sender.send(Message {
-                        connection_id: connection_id.as_arc_string(),
-                        message: Arc::new(json),
+                    send_message_to_subscriptions(
+                        connection_id,
                         sequence_counter,
-                        connection_type: ConnectionType::Ws,
+                        json,
                         message_direction,
-                    });
+                        message_sender,
+                        transmitted_headers,
+                        server_endpoint_url,
+                    );
                 } else {
-                    let _ = message_sender.send(Message {
-                        connection_id: connection_id.as_arc_string(),
-                        message: Arc::new(serde_json::Value::from(text.clone())),
+                    send_message_to_subscriptions(
+                        connection_id,
                         sequence_counter,
-                        connection_type: ConnectionType::Ws,
+                        serde_json::Value::from(text.clone()),
                         message_direction,
-                    });
+                        message_sender,
+                        transmitted_headers,
+                        server_endpoint_url,
+                    );
                 }
             }
             AxumWsMessage::Binary(value) => {
-                let _ = message_sender.send(Message {
-                    connection_id: connection_id.as_arc_string(),
-                    message: Arc::new(serde_json::Value::from(value.clone())),
+                send_message_to_subscriptions(
+                    connection_id,
                     sequence_counter,
-                    connection_type: ConnectionType::Ws,
+                    serde_json::Value::from(value.clone()),
                     message_direction,
-                });
+                    message_sender,
+                    transmitted_headers,
+                    server_endpoint_url,
+                );
             }
             _ => (),
         }

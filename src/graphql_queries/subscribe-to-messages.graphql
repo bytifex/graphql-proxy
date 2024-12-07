@@ -1,5 +1,6 @@
 subscription subscribeToMessages(
 	$messageFilters: [MessageFilter!]!
+	$includeTransmittedHeaders: Boolean
 ) {
 	messages(
 		messageFilters: $messageFilters
@@ -9,5 +10,12 @@ subscription subscribeToMessages(
 		connectionType
 		messageDirection
 		message
+		serverEndpointUrl
+		transmittedHeaders @include(if: $includeTransmittedHeaders) {
+			all {
+				name
+				value
+			}
+		}
 	}
 }

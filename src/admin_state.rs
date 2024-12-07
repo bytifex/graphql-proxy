@@ -26,8 +26,8 @@ struct AdminStateInner {
     message_sender: broadcast::Sender<Message>,
     prohibit_mutation: AtomicBool,
     server_endpoints: RwLock<GraphQLEndpoints>,
-    request_headers: RwLock<HeaderMap>,
-    response_headers: RwLock<HeaderMap>,
+    request_headers: Arc<RwLock<HeaderMap>>,
+    response_headers: Arc<RwLock<HeaderMap>>,
 }
 
 #[derive(Clone)]
@@ -48,8 +48,8 @@ impl AdminState {
                 graphql_endpoint: server_graphql_endpoint.into(),
                 graphql_ws_endpoint: server_graphql_ws_endpoint.into(),
             }),
-            request_headers: RwLock::new(request_headers),
-            response_headers: RwLock::new(response_headers),
+            request_headers: Arc::new(RwLock::new(request_headers)),
+            response_headers: Arc::new(RwLock::new(response_headers)),
         }))
     }
 
@@ -79,19 +79,11 @@ impl AdminState {
         self.0.server_endpoints.write()
     }
 
-    pub fn request_headers_read(&self) -> RwLockReadGuard<HeaderMap> {
-        self.0.request_headers.read()
+    pub fn request_headers(&self) -> &Arc<RwLock<HeaderMap>> {
+        &self.0.request_headers
     }
 
-    pub fn request_headers_write(&self) -> RwLockWriteGuard<HeaderMap> {
-        self.0.request_headers.write()
-    }
-
-    pub fn response_headers_read(&self) -> RwLockReadGuard<HeaderMap> {
-        self.0.response_headers.read()
-    }
-
-    pub fn response_headers_write(&self) -> RwLockWriteGuard<HeaderMap> {
-        self.0.response_headers.write()
+    pub fn response_headers(&self) -> &Arc<RwLock<HeaderMap>> {
+        &self.0.response_headers
     }
 }
