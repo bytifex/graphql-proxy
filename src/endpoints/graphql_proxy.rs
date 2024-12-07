@@ -30,6 +30,28 @@ pub async fn post_graphql_proxy(
     let connection_id = ConnectionId::new();
     let mut sequence_counter = 0;
 
+    const PROHIBITED_HEADER_NAMES_TO_SERVER: &[&str] = &["host", "content-length", "content-type"];
+
+    let mut request_headers = headers
+        .iter()
+        .filter_map(|(name, value)| {
+            if PROHIBITED_HEADER_NAMES_TO_SERVER.contains(&name.as_str()) {
+                None
+            } else {
+                Some((name.clone(), value.clone()))
+            }
+        })
+        .collect();
+
+    let mut additional_request_headers = state.admin_state().request_headers_read().clone();
+    move_and_replace_headers(&mut request_headers, &mut additional_request_headers, &[]);
+
+    let graphql_endpoint = state
+        .admin_state()
+        .server_graphql_endpoints_read()
+        .graphql_endpoint
+        .clone();
+
     let message_sender = state.admin_state().message_sender_ref().clone();
     if message_sender.receiver_count() != 0 {
         let _ = message_sender.send(Message {
@@ -38,6 +60,14 @@ pub async fn post_graphql_proxy(
             sequence_counter,
             connection_type: ConnectionType::Http,
             message_direction: MessageDirection::Request,
+            as_curl_command: create_curl_command_string(
+                &graphql_endpoint,
+                &request_headers,
+                &graphql_request,
+            )
+            .inspect_err(|e| log::error!("{}, {}", log_location!(), e.to_string()))
+            .map(Arc::new)
+            .ok(),
         });
     }
     sequence_counter += 1;
@@ -63,27 +93,9 @@ pub async fn post_graphql_proxy(
         ])));
     }
 
-    const PROHIBITED_HEADER_NAMES_TO_SERVER: &[&str] = &["host", "content-length", "content-type"];
-
-    let mut request_headers = headers
-        .iter()
-        .filter_map(|(name, value)| {
-            if PROHIBITED_HEADER_NAMES_TO_SERVER.contains(&name.as_str()) {
-                None
-            } else {
-                Some((name.clone(), value.clone()))
-            }
-        })
-        .collect();
-
-    let mut additional_request_headers = state.admin_state().request_headers_read().clone();
-    move_and_replace_headers(&mut request_headers, &mut additional_request_headers, &[]);
-
-    let endpoints = state.admin_state().server_graphql_endpoints_read().clone();
-
     let server_response = state
         .server_client()
-        .post(endpoints.graphql_endpoint)
+        .post(graphql_endpoint)
         .headers(request_headers)
         .json(&graphql_request.0)
         .send()
@@ -166,6 +178,7 @@ async fn process_server_response(
                 sequence_counter,
                 connection_type: ConnectionType::Http,
                 message_direction: MessageDirection::Response,
+                as_curl_command: None,
             });
         } else {
             let _ = message_sender.send(Message {
@@ -174,9 +187,32 @@ async fn process_server_response(
                 sequence_counter,
                 connection_type: ConnectionType::Http,
                 message_direction: MessageDirection::Response,
+                as_curl_command: None,
             });
         }
     }
 
     Ok((headers, Body::from(text)))
+}
+
+fn create_curl_command_string(
+    endpoint_url: &String,
+    headers: &HeaderMap,
+    graphql_request: &GraphQLRequest,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut curl_command = format!(
+        "curl -X POST '{}' -H 'Content-Type: application/json'",
+        endpoint_url
+    );
+
+    for (name, value) in headers.iter() {
+        curl_command.push_str(&format!(" -H '{}: {}'", name, value.to_str()?));
+    }
+
+    curl_command.push_str(&format!(
+        " -d '{}'",
+        serde_json::to_string(&graphql_request.0)?,
+    ));
+
+    Ok(curl_command)
 }

@@ -1,5 +1,6 @@
 subscription subscribeToMessages(
 	$messageFilters: [MessageFilter!]!
+	$includeAsCurlCommand: Boolean
 ) {
 	messages(
 		messageFilters: $messageFilters
@@ -9,5 +10,6 @@ subscription subscribeToMessages(
 		connectionType
 		messageDirection
 		message
+		asCurlCommand @include(if: $includeAsCurlCommand)
 	}
 }

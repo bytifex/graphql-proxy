@@ -295,6 +295,7 @@ fn send_message_to_subscriptions(
                         sequence_counter,
                         connection_type: ConnectionType::Ws,
                         message_direction,
+                        as_curl_command: None,
                     });
                 } else {
                     let _ = message_sender.send(Message {
@@ -303,6 +304,7 @@ fn send_message_to_subscriptions(
                         sequence_counter,
                         connection_type: ConnectionType::Ws,
                         message_direction,
+                        as_curl_command: None,
                     });
                 }
             }
@@ -313,6 +315,7 @@ fn send_message_to_subscriptions(
                     sequence_counter,
                     connection_type: ConnectionType::Ws,
                     message_direction,
+                    as_curl_command: None,
                 });
             }
             _ => (),

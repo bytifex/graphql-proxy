@@ -58,6 +58,10 @@ pub async fn subscribe_to_messages(
                 .collect::<Result<Vec<_>, _>>()?,
         ),
     );
+    variables.insert(
+        "includeAsCurlCommand".to_string(),
+        serde_json::Value::Bool(params.as_curl_command),
+    );
 
     ws_request(
         params.server_endpoint,

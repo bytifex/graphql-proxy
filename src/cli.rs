@@ -89,6 +89,14 @@ pub struct SubscribeMessagesParams {
         help("When in subscription mode, the client will try to reconnect to the server if there is no connection (e.g., 500ms"),
     )]
     pub try_reconnect_duration: Option<humantime::Duration>,
+
+    #[arg(
+        long("as-curl-command"),
+        help(
+            "When set, the requests sent to the proxied server will be returned as curl commands"
+        )
+    )]
+    pub as_curl_command: bool,
 }
 
 #[derive(Debug, Parser)]

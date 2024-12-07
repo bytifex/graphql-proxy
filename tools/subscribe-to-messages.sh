@@ -2,4 +2,5 @@
 
 graphql-proxy subscribe-to-messages \
     -e ws://localhost:8000/admin-api/graphql-ws \
-    -r 1s
+    -r 1s \
+    --as-curl-command

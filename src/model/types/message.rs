@@ -11,6 +11,7 @@ pub struct Message {
     pub connection_type: ConnectionType,
     pub message_direction: MessageDirection,
     pub connection_id: Arc<String>,
+    pub as_curl_command: Option<Arc<String>>,
 }
 
 #[Object]
@@ -33,5 +34,9 @@ impl Message {
 
     async fn connection_id(&self) -> &String {
         &self.connection_id
+    }
+
+    async fn as_curl_command(&self) -> &Option<Arc<String>> {
+        &self.as_curl_command
     }
 }
