@@ -29,5 +29,5 @@ humantime = "2.1"
 bytes = "1.8"
 uuid = "1.11"
 
-graphql-cli-tools = { git = "https://github.com/bytifex/graphql-cli-tools.git", rev = "ca475817ea4866c069a417881f115b872b223430" }
+graphql-cli-tools = { git = "https://github.com/bytifex/graphql-cli-tools.git", rev = "e058e5e8918227c5df5bd892fface438915df6ad" }
 axum-helpers = { git = "https://github.com/bytifex/axum-helpers.git", rev = "32495ce0a46da410d268ae8c607010b1b8f3777b" }
